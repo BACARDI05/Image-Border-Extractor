@@ -8,8 +8,7 @@ This is the final product, I will be not working on this project anymore.***
 
 ---
 # See it working:
-To see it working visit: [Image Border Extractor](https://github.io/BACARDI05/Image-Border-Extractor/)
-
+To see it working visit: <a href="https://github.io/BACARDI05/Image-Border/Extractor/" target="_blank">Image Border Extractor</a>
 ---
 # Why I made this ?
 I saw some Stop Challenge short/reel videos I got an idea to create and host an open source project for other to fasten their workflow, No matter what you are using either PC or phone, This project is completely open-soruce and free to use. 

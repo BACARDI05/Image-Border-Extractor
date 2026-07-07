@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080b12">
+  <title>Image Border Extractor</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css?v=1.0.0">
+</head>
+<body>
+  <header class="top-shell">
+    <a class="brand" href="#" aria-label="Image Border Extractor">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span>
+        <strong>Image Border Extractor</strong>
+        <small>Bacardi05</small>
+      </span>
+    </a>
+    <a class="donate" href="#">Support / Donate</a>
+  </header>
+
+  <main class="app-shell">
+    <section id="uploadStep" class="step active upload-hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Outer silhouette extraction</p>
+        <h1>Upload an image. Get a clean border.</h1>
+        <p>Build transparent PNG outlines from object boundaries with a guided workflow that only shows the next step when it matters.</p>
+      </div>
+      <div id="dropZone" class="upload-card" role="button" tabindex="0" aria-controls="fileInput">
+        <input id="fileInput" class="file-input" type="file" tabindex="-1" accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml">
+        <span class="upload-icon" aria-hidden="true">
+          <svg viewBox="0 0 64 64" focusable="false">
+            <path d="M32 42V14"/>
+            <path d="m21 25 11-11 11 11"/>
+            <path d="M18 42v4a8 8 0 0 0 8 8h12a8 8 0 0 0 8-8v-4"/>
+          </svg>
+        </span>
+        <strong>Drop image here</strong>
+        <span>or click to browse PNG, JPG, JPEG, WEBP, SVG</span>
+        <em id="uploadStatus" aria-live="polite"></em>
+      </div>
+      <div class="counter-card" aria-live="polite">
+        <span>Successful Files Converted</span>
+        <strong id="conversionCounter">0</strong>
+      </div>
+    </section>
+
+    <section id="detectStep" class="step">
+      <div class="section-head">
+        <p class="eyebrow">Step 2</p>
+        <h2>Image Detector</h2>
+      </div>
+      <div class="bento detection-grid">
+        <article class="panel preview-panel">
+          <canvas id="detectCanvas"></canvas>
+        </article>
+        <article class="panel info-panel">
+          <h3>File information</h3>
+          <dl id="imageInfo"></dl>
+          <p id="detectStatus" class="notice"></p>
+        </article>
+      </div>
+    </section>
+
+    <section id="decisionStep" class="step">
+      <div class="dialog-card">
+        <p class="eyebrow">Image Detector</p>
+        <h2>Your image does not have a transparent background.</h2>
+        <p>Do you want to remove the background before extracting the outer border?</p>
+        <div class="button-row">
+          <button id="removeBgButton" class="button primary" type="button">Remove Background</button>
+          <button id="skipBgButton" class="button" type="button">Skip and Continue</button>
+          <button id="restartFromDecisionButton" class="button ghost" type="button">Upload Another Image</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="selectionStep" class="step">
+      <div class="section-head">
+        <p class="eyebrow">Step 3</p>
+        <h2>Select the object to keep</h2>
+      </div>
+      <div class="bento selection-grid">
+        <aside class="panel tool-panel">
+          <h3>Selection tools</h3>
+          <div class="segmented" role="group" aria-label="Selection mode">
+            <button id="brushMode" class="active" type="button">Brush select</button>
+            <button id="eraseMode" type="button">Erase selection</button>
+          </div>
+          <label>Brush size <span id="brushSizeValue">34 px</span>
+            <input id="brushSize" type="range" min="8" max="96" value="34">
+          </label>
+          <button id="previewSelectionButton" class="button" type="button">Preview Selection</button>
+          <button id="resetSelectionButton" class="button" type="button">Reset Selection</button>
+          <button id="confirmSelectionButton" class="button primary" type="button">Confirm Selection</button>
+        </aside>
+        <article class="panel selection-stage">
+          <canvas id="selectionCanvas"></canvas>
+          <p class="hint">Paint over the object. Erase to refine the mask.</p>
+        </article>
+        <article id="selectionResult" class="panel result-panel" hidden>
+          <h3>Transparent object preview</h3>
+          <canvas id="selectionPreviewCanvas"></canvas>
+          <div class="button-row">
+            <button id="continueEditorButton" class="button primary" type="button">Continue to Editor</button>
+            <button id="refineSelectionButton" class="button" type="button">Refine Selection</button>
+            <button id="restartFromSelectionButton" class="button ghost" type="button">Upload Another Image</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="editorStep" class="step">
+      <div class="section-head editor-head">
+        <div>
+          <p class="eyebrow">Step 4</p>
+          <h2>Main editor</h2>
+          <p id="editorWarning" class="notice compact" hidden></p>
+        </div>
+        <button id="uploadAnotherButton" class="button ghost" type="button">Upload Another Image</button>
+      </div>
+      <div class="editor-grid">
+        <aside class="panel edit-panel">
+          <h3>Edit border</h3>
+          <div class="color-row">
+            <button class="color-chip active" type="button" data-color="#05070d" style="--chip:#05070d">Black</button>
+            <button class="color-chip" type="button" data-color="#ffffff" style="--chip:#ffffff">White</button>
+          </div>
+          <label>Custom color
+            <input id="outlineColor" type="color" value="#05070d">
+          </label>
+          <label>Outline thickness <span id="thicknessValue">12 px</span>
+            <input id="thickness" type="range" min="1" max="64" value="12">
+          </label>
+          <label>Smoothness <span id="smoothnessValue">2</span>
+            <input id="smoothness" type="range" min="0" max="8" value="2">
+          </label>
+          <label>Padding <span id="paddingValue">32 px</span>
+            <input id="padding" type="range" min="0" max="160" value="32">
+          </label>
+          <label class="switch"><input id="showOutlineOnOriginal" type="checkbox" checked> Show outline on original image</label>
+          <label class="switch"><input id="transparentBackground" type="checkbox" checked> Transparent background</label>
+          <button id="resetSettingsButton" class="button" type="button">Reset settings</button>
+        </aside>
+
+        <article class="panel preview-panel editor-preview">
+          <div class="panel-title">
+            <h3>Original image preview</h3>
+            <div class="zoom-controls">
+              <button id="zoomOutButton" type="button" aria-label="Zoom out">-</button>
+              <span id="zoomValue">100%</span>
+              <button id="zoomInButton" type="button" aria-label="Zoom in">+</button>
+            </div>
+          </div>
+          <div class="canvas-frame checker">
+            <canvas id="imageWithBorderCanvas"></canvas>
+          </div>
+          <button id="downloadImageButton" class="button primary" type="button" disabled>Download Image With Border</button>
+        </article>
+
+        <article class="panel preview-panel editor-preview">
+          <div class="panel-title">
+            <h3>Extracted outline preview</h3>
+          </div>
+          <div class="canvas-frame checker">
+            <canvas id="outlineOnlyCanvas"></canvas>
+          </div>
+          <button id="downloadOutlineButton" class="button primary" type="button" disabled>Download Outline Only</button>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer>© 2026 Bacardi05. All rights reserved.</footer>
+
+  <script src="js/imageProcessor.js?v=1.0.0"></script>
+  <script src="js/uiController.js?v=1.0.0"></script>
+  <script src="js/app.js?v=1.0.0"></script>
+</body>
+</html>

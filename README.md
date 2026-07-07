@@ -7,7 +7,7 @@ This is the final version, I will be not working on this project anymore.***
 
 ---
 # See it working:
-To see it working visit: [Image Border Extractor](https://github.io/BACARDI05/Image-Border-Extractor/)
+To see it working visit: [Image Border Extractor](https://bacardi05.github.io/Image-Border-Extractor/)
 
 ---
 # Why I made this ?

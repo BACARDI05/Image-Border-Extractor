@@ -163,6 +163,37 @@ function colorDistance(data, index, color) {
   return Math.sqrt(dr * dr + dg * dg + db * db);
 }
 
+function alphaEdgeMask(data, width, height) {
+  const strong = new Uint8Array(width * height);
+  let visible = 0;
+  let strongVisible = 0;
+
+  for (let p = 0, i = 0; p < strong.length; p++, i += 4) {
+    const alpha = data[i + 3];
+    if (alpha > 16) visible++;
+    if (alpha > 96) {
+      strong[p] = 1;
+      strongVisible++;
+    }
+  }
+
+  if (!strongVisible || strongVisible < visible * 0.2) return null;
+
+  let nearStrong = strong;
+  const passes = Math.max(2, Math.min(8, Math.round(Math.max(width, height) * 0.006)));
+  for (let pass = 0; pass < passes; pass++) {
+    nearStrong = dilateMask(nearStrong, width, height);
+  }
+
+  const mask = new Uint8Array(width * height);
+  for (let p = 0, i = 0; p < mask.length; p++, i += 4) {
+    const alpha = data[i + 3];
+    mask[p] = alpha > 96 || (alpha > 28 && nearStrong[p]) ? 1 : 0;
+  }
+
+  return mask;
+}
+
 function buildObjectMask(canvas, options = {}) {
   const threshold = options.threshold ?? 46;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -180,13 +211,22 @@ function buildObjectMask(canvas, options = {}) {
 
   const useAlpha = options.forceAlpha || semiTransparent > visible * 0.01;
 
-  for (let p = 0, i = 0; p < mask.length; p++, i += 4) {
-    if (data[i + 3] <= 16) {
-      mask[p] = 0;
-    } else if (useAlpha) {
-      mask[p] = data[i + 3] > 28 ? 1 : 0;
+  if (useAlpha) {
+    const alphaMask = alphaEdgeMask(data, width, height);
+    if (alphaMask) {
+      mask.set(alphaMask);
     } else {
-      mask[p] = colorDistance(data, i, background) > threshold ? 1 : 0;
+      for (let p = 0, i = 0; p < mask.length; p++, i += 4) {
+        mask[p] = data[i + 3] > 28 ? 1 : 0;
+      }
+    }
+  } else {
+    for (let p = 0, i = 0; p < mask.length; p++, i += 4) {
+      if (data[i + 3] <= 16) {
+        mask[p] = 0;
+      } else {
+        mask[p] = colorDistance(data, i, background) > threshold ? 1 : 0;
+      }
     }
   }
 

@@ -1,5 +1,6 @@
 (() => {
 const { drawCanvasInto } = window.ImageProcessor;
+const { clearCanvas } = window.ImageProcessor;
 
 class UIController {
   constructor() {
@@ -65,6 +66,7 @@ class UIController {
     }
     overlayCtx.putImageData(overlay, 0, 0);
     ctx.drawImage(overlayCanvas, 0, 0);
+    clearCanvas(overlayCanvas);
   }
 
   setSelectionResultVisible(visible) {

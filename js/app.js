@@ -3,16 +3,21 @@ const {
   applyMaskToCanvas,
   buildObjectMask,
   canvasFromImage,
+  clearCanvas,
   cloneCanvas,
   createImageWithBorder,
   createOutlineCanvas,
+  defaultQualityMode,
   downloadCanvas,
   drawCanvasInto,
   fileTypeLabel,
   formatBytes,
   hasTransparency,
+  imageNeedsOptimization,
   keepLargestComponent,
   loadImageFromFile,
+  qualityMaxSide,
+  validateFileSafety,
   validateImageSize
 } = window.ImageProcessor;
 const { UIController } = window;
@@ -28,11 +33,16 @@ const state = {
   downloadImage: null,
   downloadOutline: null,
   isRendering: false,
+  isProcessing: false,
   alphaReliable: true,
   selectionMode: 'brush',
   selectionPreview: false,
   drawing: false,
   renderTimer: 0,
+  animationFrameId: 0,
+  processId: 0,
+  cachedMaskKey: '',
+  cachedRenderKey: '',
   zoom: 1
 };
 
@@ -52,6 +62,7 @@ const el = {
   padding: document.getElementById('padding'),
   showOutline: document.getElementById('showOutlineOnOriginal'),
   transparentBackground: document.getElementById('transparentBackground'),
+  qualityMode: document.getElementById('qualityMode'),
   imageWithBorder: document.getElementById('imageWithBorderCanvas'),
   outlineOnly: document.getElementById('outlineOnlyCanvas'),
   thicknessValue: document.getElementById('thicknessValue'),
@@ -91,8 +102,26 @@ function incrementConversionCount() {
 }
 
 function setDownloadsReady(ready) {
-  document.getElementById('downloadImageButton').disabled = !ready;
-  document.getElementById('downloadOutlineButton').disabled = !ready;
+  document.getElementById('downloadImageButton').disabled = !ready || state.isProcessing;
+  document.getElementById('downloadOutlineButton').disabled = !ready || state.isProcessing;
+}
+
+function setControlsLocked(locked) {
+  state.isProcessing = locked;
+  [
+    el.fileInput,
+    document.getElementById('removeBgButton'),
+    document.getElementById('skipBgButton'),
+    document.getElementById('resetSelectionButton'),
+    document.getElementById('previewSelectionButton'),
+    document.getElementById('confirmSelectionButton'),
+    document.getElementById('continueEditorButton'),
+    document.getElementById('downloadImageButton'),
+    document.getElementById('downloadOutlineButton')
+  ].forEach((node) => {
+    if (node) node.disabled = locked || (node.id?.startsWith('download') && !(state.downloadImage && state.downloadOutline));
+  });
+  el.dropZone.classList.toggle('loading', locked);
 }
 
 function setEditorProcessing(message) {
@@ -100,6 +129,47 @@ function setEditorProcessing(message) {
   ui.setEditorWarning(warning);
   state.isRendering = Boolean(message);
   setDownloadsReady(!state.isRendering && Boolean(state.downloadImage && state.downloadOutline));
+}
+
+function nextFrame() {
+  cancelAnimation();
+  return new Promise((resolve) => {
+    state.animationFrameId = requestAnimationFrame(() => {
+      state.animationFrameId = 0;
+      resolve();
+    });
+  });
+}
+
+function cancelAnimation() {
+  if (!state.animationFrameId) return;
+  cancelAnimationFrame(state.animationFrameId);
+  state.animationFrameId = 0;
+}
+
+function cancelWork() {
+  state.processId++;
+  cancelAnimation();
+  window.clearTimeout(state.renderTimer);
+  state.renderTimer = 0;
+  state.drawing = false;
+  setControlsLocked(false);
+}
+
+function assertCurrent(processId) {
+  if (processId !== state.processId) throw new Error('Processing was cancelled.');
+}
+
+function releaseCanvas(name) {
+  if (state[name]) {
+    clearCanvas(state[name]);
+    state[name] = null;
+  }
+}
+
+function releaseGeneratedCanvases() {
+  releaseCanvas('downloadImage');
+  releaseCanvas('downloadOutline');
 }
 
 function currentSettings() {
@@ -125,33 +195,48 @@ function updateLabels() {
 }
 
 function resetAll() {
+  cancelWork();
+  releaseCanvas('original');
+  releaseCanvas('editable');
+  releaseGeneratedCanvases();
   state.file = null;
-  state.original = null;
-  state.editable = null;
   state.objectMask = null;
   state.selectionMask = null;
-  state.downloadImage = null;
-  state.downloadOutline = null;
   state.alphaReliable = true;
   state.selectionPreview = false;
+  state.cachedMaskKey = '';
+  state.cachedRenderKey = '';
   state.zoom = 1;
   el.fileInput.value = '';
   setUploadStatus('');
   setDownloadsReady(false);
   ui.setSelectionResultVisible(false);
   ui.setEditorWarning('');
+  [document.getElementById('detectCanvas'), el.selectionCanvas, el.selectionPreviewCanvas, el.imageWithBorder, el.outlineOnly].forEach(clearCanvas);
   updateLabels();
   ui.showStep('upload');
 }
 
 async function handleFile(file) {
   if (!file) return;
+  const processId = state.processId + 1;
+  cancelWork();
+  state.processId = processId;
+  releaseCanvas('original');
+  releaseCanvas('editable');
+  releaseGeneratedCanvases();
+  state.objectMask = null;
+  state.selectionMask = null;
+  state.cachedMaskKey = '';
+  state.cachedRenderKey = '';
   if (!isSupportedImage(file)) {
     setUploadStatus('Please upload PNG, JPG, JPEG, WEBP, or SVG.');
     return;
   }
 
   try {
+    validateFileSafety(file);
+    setControlsLocked(true);
     state.file = file;
     setUploadStatus(`Loading ${file.name}...`, true);
     ui.setImageInfo({
@@ -166,16 +251,22 @@ async function handleFile(file) {
       status: 'Loading image and preparing detection...'
     });
     ui.showStep('detect');
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await nextFrame();
+    assertCurrent(processId);
 
     const image = await loadImageFromFile(file);
+    assertCurrent(processId);
     validateImageSize(image);
-    setUploadStatus('Detecting transparency...', true);
+    const maxSide = qualityMaxSide(el.qualityMode.value);
+    const optimizing = imageNeedsOptimization(image) || Math.max(image.naturalWidth, image.naturalHeight) > maxSide;
+    setUploadStatus(optimizing
+      ? 'Large image detected. Using optimized processing mode to prevent browser crash.'
+      : 'Detecting transparency...', true);
 
-    state.original = canvasFromImage(image);
-    state.editable = null;
-    state.objectMask = null;
-    state.selectionMask = null;
+    state.original = canvasFromImage(image, maxSide);
+    assertCurrent(processId);
+    await nextFrame();
+    assertCurrent(processId);
     ui.drawDetectionPreview(state.original);
     ui.setImageInfo({
       name: file.name,
@@ -185,22 +276,32 @@ async function handleFile(file) {
       height: state.original.height,
       transparent: false,
       transparentLabel: 'Checking...',
-      status: 'Detecting transparency and preparing the next step...'
+      status: optimizing
+        ? 'Large image detected. Using optimized processing mode to prevent browser crash.'
+        : 'Detecting transparency and preparing the next step...'
     });
-    setUploadStatus('');
+    if (optimizing) setUploadStatus('Large image detected. Using optimized processing mode to prevent browser crash.', true);
     ui.showStep('detect');
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await nextFrame();
+    assertCurrent(processId);
     const transparent = hasTransparency(state.original);
+    assertCurrent(processId);
     ui.setImageInfo({
       name: file.name,
       type: fileTypeLabel(file),
       size: formatBytes(file.size),
       width: state.original.width,
       height: state.original.height,
-      transparent
+      transparent,
+      status: optimizing
+        ? 'Large image detected. Using optimized processing mode to prevent browser crash.'
+        : undefined
     });
 
     window.setTimeout(() => {
+      if (processId !== state.processId) return;
+      setControlsLocked(false);
+      setUploadStatus('');
       if (transparent) {
         startEditor(cloneCanvas(state.original), true);
       } else {
@@ -208,17 +309,36 @@ async function handleFile(file) {
       }
     }, 650);
   } catch (error) {
-    setUploadStatus(error.message || 'This image could not be loaded. Try another file.');
-    ui.showStep('upload');
+    if (error.message !== 'Processing was cancelled.') {
+      setUploadStatus(error.message || 'This image could not be loaded. Try another file.');
+      ui.showStep('upload');
+    }
   } finally {
-    el.dropZone.classList.remove('loading');
+    if (processId === state.processId) setControlsLocked(false);
   }
 }
 
-function buildInitialSelection() {
-  state.selectionMask = buildObjectMask(state.original, { threshold: 42 });
-  state.selectionPreview = false;
-  ui.drawSelectionCanvas(el.selectionCanvas, state.original, state.selectionMask, false);
+async function buildInitialSelection() {
+  const processId = state.processId + 1;
+  cancelWork();
+  state.processId = processId;
+  setControlsLocked(true);
+  setUploadStatus('Building selection mask...', true);
+  try {
+    await nextFrame();
+    assertCurrent(processId);
+    state.selectionMask = buildObjectMask(state.original, { threshold: 42 });
+    assertCurrent(processId);
+    state.selectionPreview = false;
+    ui.drawSelectionCanvas(el.selectionCanvas, state.original, state.selectionMask, false);
+    setUploadStatus('');
+  } catch (error) {
+    if (error.message !== 'Processing was cancelled.') {
+      setUploadStatus(error.message || 'Selection processing failed.');
+    }
+  } finally {
+    if (processId === state.processId) setControlsLocked(false);
+  }
 }
 
 function startSelection() {
@@ -251,34 +371,66 @@ function drawBrush(event) {
   ui.drawSelectionCanvas(el.selectionCanvas, state.original, state.selectionMask, state.selectionPreview);
 }
 
-function confirmSelection() {
+async function confirmSelection() {
   if (!state.selectionMask) return;
-  const mask = keepLargestComponent(state.selectionMask, state.original.width, state.original.height);
-  const transparentObject = applyMaskToCanvas(state.original, mask);
-  state.editable = transparentObject;
-  state.objectMask = mask;
-  drawCanvasInto(el.selectionPreviewCanvas, transparentObject);
-  ui.setSelectionResultVisible(true);
+  const processId = state.processId + 1;
+  cancelWork();
+  state.processId = processId;
+  setControlsLocked(true);
+  setUploadStatus('Preparing transparent preview...', true);
+  try {
+    await nextFrame();
+    assertCurrent(processId);
+    const mask = keepLargestComponent(state.selectionMask, state.original.width, state.original.height);
+    const transparentObject = applyMaskToCanvas(state.original, mask);
+    assertCurrent(processId);
+    releaseCanvas('editable');
+    state.editable = transparentObject;
+    state.objectMask = mask;
+    state.cachedMaskKey = `${state.original.width}x${state.original.height}:alpha`;
+    drawCanvasInto(el.selectionPreviewCanvas, transparentObject);
+    ui.setSelectionResultVisible(true);
+    setUploadStatus('');
+  } catch (error) {
+    if (error.message !== 'Processing was cancelled.') {
+      setUploadStatus(error.message || 'Selection preview failed.');
+    }
+  } finally {
+    if (processId === state.processId) setControlsLocked(false);
+  }
 }
 
-function startEditor(canvas, alphaReliable) {
+async function startEditor(canvas, alphaReliable) {
+  const processId = state.processId + 1;
+  cancelWork();
+  state.processId = processId;
+  releaseGeneratedCanvases();
   state.editable = canvas;
   state.alphaReliable = alphaReliable;
-  state.downloadImage = null;
-  state.downloadOutline = null;
+  state.cachedRenderKey = '';
   setDownloadsReady(false);
   ui.setEditorWarning(alphaReliable ? '' : 'Background removal was skipped, so border detection is estimated and may be less accurate.');
   ui.showStep('editor');
   setEditorProcessing('Processing outline...');
-  window.setTimeout(() => {
-    try {
+  setControlsLocked(true);
+  try {
+    await nextFrame();
+    assertCurrent(processId);
+    const maskKey = `${canvas.width}x${canvas.height}:${alphaReliable ? 'alpha' : 'estimate'}`;
+    if (!state.objectMask || state.cachedMaskKey !== maskKey) {
       state.objectMask = buildObjectMask(canvas, { forceAlpha: alphaReliable });
-      scheduleRender();
-    } catch (error) {
+      state.cachedMaskKey = maskKey;
+    }
+    assertCurrent(processId);
+    setControlsLocked(false);
+    scheduleRender();
+  } catch (error) {
+    if (error.message !== 'Processing was cancelled.') {
       ui.setEditorWarning(error.message || 'Outline processing failed. Try another image.');
       setDownloadsReady(false);
     }
-  }, 30);
+    setControlsLocked(false);
+  }
 }
 
 function scheduleRender() {
@@ -291,12 +443,20 @@ function renderEditor() {
   if (!state.editable || !state.objectMask) return;
   setDownloadsReady(false);
   const settings = currentSettings();
+  const renderKey = JSON.stringify(settings);
+  if (state.cachedRenderKey === renderKey && state.downloadImage && state.downloadOutline) {
+    setDownloadsReady(true);
+    return;
+  }
+  releaseGeneratedCanvases();
   const outline = createOutlineCanvas(state.objectMask, state.editable.width, state.editable.height, settings);
   const imageWithBorder = createImageWithBorder(state.editable, outline, settings);
   state.downloadOutline = outline;
   state.downloadImage = createImageWithBorder(state.editable, outline, { ...settings, showOutline: true });
   drawCanvasInto(el.outlineOnly, outline);
   drawCanvasInto(el.imageWithBorder, imageWithBorder);
+  clearCanvas(imageWithBorder);
+  state.cachedRenderKey = renderKey;
   state.isRendering = false;
   ui.setEditorWarning(state.alphaReliable ? '' : 'Background removal was skipped, so border detection is estimated and may be less accurate.');
   setDownloadsReady(true);
@@ -326,6 +486,8 @@ function resetSettings() {
   setColor('#05070d');
   scheduleRender();
 }
+
+el.qualityMode.value = defaultQualityMode();
 
 el.dropZone.addEventListener('keydown', (event) => {
   if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -386,6 +548,11 @@ el.selectionCanvas.addEventListener('pointercancel', () => { state.drawing = fal
 [el.outlineColor, el.thickness, el.smoothness, el.padding, el.showOutline, el.transparentBackground].forEach((control) => {
   control.addEventListener('input', scheduleRender);
   control.addEventListener('change', scheduleRender);
+});
+
+el.qualityMode.addEventListener('change', () => {
+  cancelWork();
+  setUploadStatus('Performance mode will apply to the next uploaded image.');
 });
 
 document.querySelectorAll('.color-chip').forEach((chip) => {

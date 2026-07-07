@@ -1,6 +1,33 @@
 (() => {
-const MAX_SIDE = 1800;
-const MAX_INPUT_PIXELS = 24000000;
+const QUALITY_MODES = {
+  mobile: { label: 'Mobile Safe', maxSide: 1024 },
+  balanced: { label: 'Balanced', maxSide: 1536 },
+  high: { label: 'High Quality', maxSide: 2048 }
+};
+const LARGE_INPUT_PIXELS = 12000000;
+const EXTREME_INPUT_PIXELS = 80000000;
+const EXTREME_FILE_BYTES = 60 * 1024 * 1024;
+
+function isLowMemoryDevice() {
+  const memory = navigator.deviceMemory || 8;
+  const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches;
+  const narrowViewport = Math.min(window.innerWidth || 0, window.innerHeight || 0) <= 820;
+  return memory <= 4 || Boolean(coarsePointer && narrowViewport);
+}
+
+function defaultQualityMode() {
+  return isLowMemoryDevice() ? 'mobile' : 'balanced';
+}
+
+function qualityMaxSide(mode) {
+  return QUALITY_MODES[mode]?.maxSide || QUALITY_MODES.balanced.maxSide;
+}
+
+function clearCanvas(canvas) {
+  if (!canvas) return;
+  canvas.width = 0;
+  canvas.height = 0;
+}
 
 async function loadImageFromFile(file) {
   const url = URL.createObjectURL(file);
@@ -29,14 +56,24 @@ async function loadImageFromFile(file) {
   }
 }
 
+function validateFileSafety(file) {
+  if (file.size > EXTREME_FILE_BYTES) {
+    throw new Error('Image file is too large. Use an image under 60 MB.');
+  }
+}
+
 function validateImageSize(image) {
   const pixels = image.naturalWidth * image.naturalHeight;
   if (!image.naturalWidth || !image.naturalHeight) {
     throw new Error('Image has invalid dimensions.');
   }
-  if (pixels > MAX_INPUT_PIXELS) {
-    throw new Error('Image is too large. Use an image under 24 megapixels.');
+  if (pixels > EXTREME_INPUT_PIXELS) {
+    throw new Error('Image is too large. Use an image under 80 megapixels.');
   }
+}
+
+function imageNeedsOptimization(image) {
+  return image.naturalWidth * image.naturalHeight > LARGE_INPUT_PIXELS;
 }
 
 function fileTypeLabel(file) {
@@ -52,9 +89,9 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 ** power).toFixed(power ? 1 : 0)} ${units[power]}`;
 }
 
-function canvasFromImage(image) {
+function canvasFromImage(image, maxSide = QUALITY_MODES.balanced.maxSide) {
   validateImageSize(image);
-  const scale = Math.min(1, MAX_SIDE / Math.max(image.naturalWidth, image.naturalHeight));
+  const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
   canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
@@ -72,10 +109,15 @@ function cloneCanvas(source) {
 
 function hasTransparency(canvas) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
   for (let i = 3; i < data.length; i += 4) {
-    if (data[i] < 250) return true;
+    if (data[i] < 250) {
+      imageData = null;
+      return true;
+    }
   }
+  imageData = null;
   return false;
 }
 
@@ -124,7 +166,8 @@ function colorDistance(data, index, color) {
 function buildObjectMask(canvas, options = {}) {
   const threshold = options.threshold ?? 46;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const { data, width, height } = imageData;
   const mask = new Uint8Array(width * height);
   const background = estimateBackground(data, width, height);
   let semiTransparent = 0;
@@ -147,7 +190,9 @@ function buildObjectMask(canvas, options = {}) {
     }
   }
 
-  return smoothMask(closeMask(keepLargestComponent(mask, width, height), width, height), width, height, 1);
+  const result = smoothMask(closeMask(keepLargestComponent(mask, width, height), width, height), width, height, 1);
+  imageData = null;
+  return result;
 }
 
 function closeMask(mask, width, height) {
@@ -309,6 +354,8 @@ function createOutlineCanvas(mask, width, height, settings) {
   ctx.fillStyle = settings.color;
   ctx.fillRect(0, 0, outWidth, outHeight);
   ctx.restore();
+  clearCanvas(baseMask);
+  clearCanvas(filledMask);
   return outline;
 }
 
@@ -351,19 +398,25 @@ function downloadCanvas(canvas, fileName, onSuccess) {
 }
 
 window.ImageProcessor = {
+  QUALITY_MODES,
   applyMaskToCanvas,
   buildObjectMask,
   canvasFromImage,
+  clearCanvas,
   cloneCanvas,
   createImageWithBorder,
   createOutlineCanvas,
+  defaultQualityMode,
   downloadCanvas,
   drawCanvasInto,
   fileTypeLabel,
   formatBytes,
   hasTransparency,
+  imageNeedsOptimization,
   keepLargestComponent,
   loadImageFromFile,
+  qualityMaxSide,
+  validateFileSafety,
   validateImageSize
 };
 })();

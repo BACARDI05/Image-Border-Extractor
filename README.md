@@ -2,8 +2,8 @@
 This is a private project, You can use modify but cannot sell without the author's permission.
 This project helps to create only outline of an image which you can download with just one click.
 
-***This project is made only for personal use do not ask me to update upgrade or do anything in this.
-This is the final product, I will be not working on this project anymore.***
+***This project is made only for personal use do not ask me to update upgrade or do anything.
+This is the final version, I will be not working on this project anymore.***
 
 ---
 # See it working:

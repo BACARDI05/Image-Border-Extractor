@@ -1,5 +1,4 @@
 <h1 align="center">Image Border Extractor</h1>
-
 ---
 This is a private project, You can use modify but cannot sell without the author's permission.
 This project helps to create only outline of an image which you can download with just one click.
